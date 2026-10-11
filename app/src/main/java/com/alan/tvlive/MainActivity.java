@@ -304,6 +304,7 @@ public class MainActivity extends Activity {
     int pollGen = -1;
     int polls = 0;
     int pSel = 0;
+    int lastVol = -1;
     boolean tapped = false;
     boolean inPlayer = false;
     boolean cleaned = false;
@@ -323,6 +324,19 @@ public class MainActivity extends Activity {
     Runnable volHide = new Runnable() {
         @Override
         public void run() { volBox.setVisibility(View.GONE); }
+    };
+
+    // 每 300 毫秒看一次系统音量，变了就弹出音量条（覆盖系统自己处理音量键的电视）
+    Runnable volWatch = new Runnable() {
+        @Override
+        public void run() {
+            if (CUSTOM_VOLUME && audio != null) {
+                int cur = audio.getStreamVolume(AudioManager.STREAM_MUSIC);
+                if (lastVol >= 0 && cur != lastVol) showVolume();
+                lastVol = cur;
+            }
+            ph.postDelayed(this, 300);
+        }
     };
 
     // 清理完成（或超时）后，关闭加载页，进入选台菜单
@@ -410,6 +424,9 @@ public class MainActivity extends Activity {
                 customCb = cb;
                 root.addView(v, new FrameLayout.LayoutParams(-1, -1));
                 web.setVisibility(View.GONE);
+                // 频道栏和音量条要浮在视频全屏画面上面
+                panel.bringToFront();
+                volBox.bringToFront();
             }
 
             @Override
@@ -919,16 +936,17 @@ public class MainActivity extends Activity {
         Process.killProcess(Process.myPid());
     }
 
-    // 切到别的 App：开始 30 秒倒计时
+    // 切到别的 App：开始 30 秒倒计时，并停止监听音量
     @Override
     protected void onStop() {
         super.onStop();
         web.onPause();
+        ph.removeCallbacks(volWatch);
         stopTime = SystemClock.elapsedRealtime();
         bgH.postDelayed(exitTask, BG_EXIT_MS);
     }
 
-    // 回到本 App：取消倒计时；如果系统冻结了定时器，这里再判断一次
+    // 回到本 App：取消倒计时；如果系统冻结了定时器，这里再判断一次；开始监听音量
     @Override
     protected void onStart() {
         super.onStart();
@@ -939,6 +957,9 @@ public class MainActivity extends Activity {
         }
         stopTime = 0;
         web.onResume();
+        lastVol = -1;
+        ph.removeCallbacks(volWatch);
+        ph.post(volWatch);
     }
 
     // 按键总入口：
