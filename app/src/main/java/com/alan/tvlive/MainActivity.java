@@ -1,8 +1,12 @@
 package com.alan.tvlive;
 
 import android.app.Activity;
+import android.content.Context;
 import android.content.res.ColorStateList;
 import android.graphics.Bitmap;
+import android.graphics.Canvas;
+import android.graphics.Paint;
+import android.graphics.RectF;
 import android.graphics.Typeface;
 import android.graphics.drawable.GradientDrawable;
 import android.os.Bundle;
@@ -47,11 +51,23 @@ public class MainActivity extends Activity {
     // 启动加载页至少显示多久（毫秒），避免一闪而过
     static final long LOADING_MIN_MS = 1500;
 
+    // 菜单上的专属文字，想改话就改这里
+    static final String MENU_BRAND = "TVB 直播";
+    static final String MENU_TITLE = "May姐专属";
+    static final String MENU_SUB = "天天开心　看得开心";
+
     // 主题色
     static final int COLOR_BG = 0xFF111111;
     static final int COLOR_ACCENT = 0xFFFFB300;
-    static final int COLOR_ROW = 0xFF242424;
-    static final int COLOR_BADGE = 0xFF3A3A3A;
+    static final int COLOR_ROW = 0x66000000;
+    static final int COLOR_BADGE = 0x29FFFFFF;
+
+    // 壁纸颜色
+    static final int COLOR_WALL = 0xFF2B1620;
+    static final int COLOR_PINK = 0xFFF4A6B8;
+    static final int COLOR_CORAL = 0xFFF28B82;
+    static final int COLOR_GOLD = 0xFFF7C873;
+    static final int COLOR_LEAF = 0xFF4F7F58;
 
     // 频道列表：名字和网址一一对应，要增减频道就改这两个数组
     static final String[] NAMES = {
@@ -123,6 +139,94 @@ public class MainActivity extends Activity {
         "document.documentElement.style.overflow='hidden';" +
         "document.body.style.overflow='hidden';" +
         "})();";
+
+    // 选台菜单的壁纸：酒红底色 + 四角的花和叶子 + 小金点，全部用代码画，不需要图片文件
+    static class Wallpaper extends View {
+        final Paint p = new Paint(Paint.ANTI_ALIAS_FLAG);
+        final RectF petal = new RectF(-12, -44, 12, 0);
+        final RectF leafRect = new RectF(-8, -36, 8, 0);
+
+        Wallpaper(Context c) {
+            super(c);
+        }
+
+        void flower(Canvas c, float x, float y, float sc, int color) {
+            c.save();
+            c.translate(x, y);
+            c.scale(sc, sc);
+            p.setColor(color);
+            for (int i = 0; i < 5; i++) {
+                c.save();
+                c.rotate(72 * i);
+                c.drawOval(petal, p);
+                c.restore();
+            }
+            p.setColor(COLOR_ACCENT);
+            c.drawCircle(0, 0, 9, p);
+            c.restore();
+        }
+
+        void leaf(Canvas c, float x, float y, float rot, float sc) {
+            c.save();
+            c.translate(x, y);
+            c.rotate(rot);
+            c.scale(sc, sc);
+            p.setColor(COLOR_LEAF);
+            c.drawOval(leafRect, p);
+            c.restore();
+        }
+
+        void dot(Canvas c, float x, float y, float r, int color) {
+            p.setColor(color);
+            c.drawCircle(x, y, r, p);
+        }
+
+        @Override
+        protected void onDraw(Canvas c) {
+            int w = getWidth();
+            int h = getHeight();
+            c.drawColor(COLOR_WALL);
+            // 按 640x360 的画布设计，等比放大铺满屏幕
+            float s = Math.max(w / 640f, h / 360f);
+            c.save();
+            c.translate((w - 640 * s) / 2f, (h - 360 * s) / 2f);
+            c.scale(s, s);
+
+            // 左上角
+            leaf(c, 40, 70, -60, 1.6f);
+            leaf(c, 40, 70, 20, 1.6f);
+            leaf(c, 40, 70, 100, 1.4f);
+            flower(c, 48, 60, 1.5f, COLOR_PINK);
+            flower(c, 110, 30, 0.9f, COLOR_CORAL);
+            flower(c, 18, 140, 0.8f, COLOR_GOLD);
+
+            // 右下角
+            leaf(c, 600, 310, 160, 1.6f);
+            leaf(c, 600, 310, 240, 1.6f);
+            leaf(c, 600, 310, -20, 1.4f);
+            flower(c, 592, 300, 1.5f, COLOR_PINK);
+            flower(c, 530, 332, 0.9f, COLOR_GOLD);
+            flower(c, 624, 222, 0.8f, COLOR_CORAL);
+
+            // 右上角
+            leaf(c, 596, 48, 120, 1.1f);
+            flower(c, 596, 48, 0.9f, COLOR_GOLD);
+
+            // 左下角
+            leaf(c, 46, 318, 50, 1.1f);
+            flower(c, 46, 318, 0.9f, COLOR_PINK);
+
+            // 小金点
+            dot(c, 170, 60, 3f, COLOR_ACCENT);
+            dot(c, 470, 40, 2.5f, COLOR_PINK);
+            dot(c, 520, 110, 2f, COLOR_ACCENT);
+            dot(c, 130, 290, 2.5f, COLOR_PINK);
+            dot(c, 480, 320, 3f, COLOR_ACCENT);
+            dot(c, 70, 220, 2f, COLOR_ACCENT);
+
+            c.restore();
+        }
+    }
 
     WebView web;
     FrameLayout root;
@@ -262,7 +366,7 @@ public class MainActivity extends Activity {
         return g;
     }
 
-    // 菜单一行的外观：选中 = 琥珀底黑字，没选中 = 深灰底白字
+    // 菜单一行的外观：选中 = 琥珀底黑字，没选中 = 半透明深色底白字
     void paint(LinearLayout row, boolean focused) {
         row.setBackground(round(focused ? COLOR_ACCENT : COLOR_ROW, 14));
         TextView badge = (TextView) row.getChildAt(0);
@@ -283,7 +387,7 @@ public class MainActivity extends Activity {
         col.setBackgroundColor(COLOR_BG);
 
         TextView brand = new TextView(this);
-        brand.setText("TVB 直播");
+        brand.setText(MENU_BRAND);
         brand.setTextColor(COLOR_ACCENT);
         brand.setTextSize(TypedValue.COMPLEX_UNIT_SP, 22);
         brand.setLetterSpacing(0.15f);
@@ -309,31 +413,41 @@ public class MainActivity extends Activity {
         root.addView(loading, new FrameLayout.LayoutParams(-1, -1));
     }
 
-    // 频道列表（遥控器上下键选、OK 键进入）
+    // 频道列表（遥控器上下键选、OK 键进入），背后是专属壁纸
     void buildMenu() {
+        FrameLayout wrap = new FrameLayout(this);
+        wrap.addView(new Wallpaper(this), new FrameLayout.LayoutParams(-1, -1));
+
         ScrollView sv = new ScrollView(this);
-        sv.setBackgroundColor(COLOR_BG);
         sv.setFillViewport(true);
         LinearLayout col = new LinearLayout(this);
         col.setOrientation(LinearLayout.VERTICAL);
         col.setGravity(Gravity.CENTER);
-        col.setPadding(dp(40), dp(20), dp(40), dp(20));
+        col.setPadding(dp(40), dp(16), dp(40), dp(16));
         sv.addView(col, new FrameLayout.LayoutParams(-1, -2));
 
         TextView brand = new TextView(this);
-        brand.setText("TVB 直播");
-        brand.setTextColor(COLOR_ACCENT);
-        brand.setTextSize(TypedValue.COMPLEX_UNIT_SP, 18);
+        brand.setText(MENU_BRAND);
+        brand.setTextColor(COLOR_PINK);
+        brand.setTextSize(TypedValue.COMPLEX_UNIT_SP, 16);
         brand.setLetterSpacing(0.15f);
         brand.setGravity(Gravity.CENTER);
-        col.addView(brand, lp(-2, -2, 0, 0, 0, dp(2)));
+        col.addView(brand, lp(-2, -2, 0, 0, 0, 0));
 
         TextView title = new TextView(this);
-        title.setText("请选择频道");
-        title.setTextColor(0xFFFFFFFF);
-        title.setTextSize(TypedValue.COMPLEX_UNIT_SP, 30);
+        title.setText(MENU_TITLE);
+        title.setTextColor(COLOR_ACCENT);
+        title.setTextSize(TypedValue.COMPLEX_UNIT_SP, 40);
+        title.setTypeface(Typeface.DEFAULT_BOLD);
         title.setGravity(Gravity.CENTER);
-        col.addView(title, lp(-2, -2, 0, 0, 0, dp(14)));
+        col.addView(title, lp(-2, -2, 0, 0, 0, dp(2)));
+
+        TextView sub = new TextView(this);
+        sub.setText(MENU_SUB);
+        sub.setTextColor(0xFFF4D5DC);
+        sub.setTextSize(TypedValue.COMPLEX_UNIT_SP, 18);
+        sub.setGravity(Gravity.CENTER);
+        col.addView(sub, lp(-2, -2, 0, 0, 0, dp(14)));
 
         for (int i = 0; i < NAMES.length; i++) {
             final int n = i;
@@ -346,14 +460,14 @@ public class MainActivity extends Activity {
 
             TextView badge = new TextView(this);
             badge.setText(String.valueOf(i + 1));
-            badge.setTextSize(TypedValue.COMPLEX_UNIT_SP, 22);
+            badge.setTextSize(TypedValue.COMPLEX_UNIT_SP, 20);
             badge.setTypeface(Typeface.DEFAULT_BOLD);
             badge.setGravity(Gravity.CENTER);
-            row.addView(badge, lp(dp(44), dp(44), 0, 0, 0, 0));
+            row.addView(badge, lp(dp(40), dp(40), 0, 0, 0, 0));
 
             TextView name = new TextView(this);
             name.setText(NAMES[i]);
-            name.setTextSize(TypedValue.COMPLEX_UNIT_SP, 28);
+            name.setTextSize(TypedValue.COMPLEX_UNIT_SP, 26);
             name.setTypeface(Typeface.DEFAULT_BOLD);
             name.setGravity(Gravity.CENTER_VERTICAL);
             LinearLayout.LayoutParams np = new LinearLayout.LayoutParams(0, -2, 1f);
@@ -362,7 +476,7 @@ public class MainActivity extends Activity {
 
             TextView arrow = new TextView(this);
             arrow.setText("›");
-            arrow.setTextSize(TypedValue.COMPLEX_UNIT_SP, 34);
+            arrow.setTextSize(TypedValue.COMPLEX_UNIT_SP, 32);
             arrow.setTypeface(Typeface.DEFAULT_BOLD);
             row.addView(arrow, lp(-2, -2, 0, 0, 0, 0));
 
@@ -379,18 +493,12 @@ public class MainActivity extends Activity {
                     openChannel(n);
                 }
             });
-            col.addView(row, lp(dp(680), dp(64), 0, dp(4), 0, dp(4)));
+            col.addView(row, lp(dp(640), dp(58), 0, dp(4), 0, dp(4)));
             btns[i] = row;
         }
 
-        TextView tip = new TextView(this);
-        tip.setText("上下键选择　OK 进入　频道键切台");
-        tip.setTextColor(0xFF777777);
-        tip.setTextSize(TypedValue.COMPLEX_UNIT_SP, 18);
-        tip.setGravity(Gravity.CENTER);
-        col.addView(tip, lp(-2, -2, 0, dp(12), 0, 0));
-
-        menu = sv;
+        wrap.addView(sv, new FrameLayout.LayoutParams(-1, -1));
+        menu = wrap;
         root.addView(menu, new FrameLayout.LayoutParams(-1, -1));
     }
 
