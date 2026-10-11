@@ -23,6 +23,8 @@ public class MainActivity extends Activity {
     static final boolean BLOCK_ADS = true;
     // 调试提示：调好后改成 false
     static final boolean DEBUG = true;
+    // 点击播放后，等多少毫秒再放大
+    static final int ENLARGE_DELAY_MS = 8000;
 
     static final String[] ALLOW_HOSTS = { "yes2049.com", "yeslivetv.com", "cloudflare" };
     static final String[] AD_HOSTS = {
@@ -38,14 +40,14 @@ public class MainActivity extends Activity {
         "var css=document.createElement('style');" +
         "css.textContent='ins.adsbygoogle,iframe[id^=google_ads],div[id^=google_ads],iframe[src*=doubleclick],iframe[src*=googlesyndication]{display:none!important}';" +
         "(document.head||document.documentElement).appendChild(css);" +
-        "var n=0;" +
-        "var t=setInterval(function(){" +
-        "n++;if(n>90){clearInterval(t);return;}" +
-        "var vs=document.querySelectorAll('video'),v=null,best=0;" +
-        "for(var i=0;i<vs.length;i++){var r=vs[i].getBoundingClientRect();var a=r.width*r.height;if(vs[i].closest('.video-js'))a+=1e9;if(a>best){best=a;v=vs[i];}}" +
-        "if(!v)return;" +
-        "var box=v.closest('.video-js')||v.parentElement;" +
-        "if(box&&!box.__big){box.__big=1;var s=box.style;" +
+        "var D=" + ENLARGE_DELAY_MS + ",t0=0,big=0,last=0,n=0;" +
+        "function play(v){" +
+        "var b=document.querySelector('.vjs-big-play-button');if(b)b.click();" +
+        "v.muted=false;var p=v.play();if(p&&p.catch)p.catch(function(){});" +
+        "last=Date.now();}" +
+        "function enlarge(v){" +
+        "var box=v.closest('.video-js')||v.parentElement;if(!box)return;" +
+        "var s=box.style;" +
         "s.setProperty('position','fixed','important');" +
         "s.setProperty('left','0','important');" +
         "s.setProperty('top','0','important');" +
@@ -57,9 +59,15 @@ public class MainActivity extends Activity {
         "s.setProperty('background','#000','important');" +
         "document.documentElement.style.overflow='hidden';" +
         "document.body.style.overflow='hidden';}" +
-        "if(v.paused){" +
-        "var b=document.querySelector('.vjs-big-play-button');if(b)b.click();" +
-        "v.muted=false;var p=v.play();if(p&&p.catch)p.catch(function(){});}" +
+        "var t=setInterval(function(){" +
+        "n++;if(n>200){clearInterval(t);return;}" +
+        "var vs=document.querySelectorAll('video'),v=null,best=0;" +
+        "for(var i=0;i<vs.length;i++){var r=vs[i].getBoundingClientRect();var a=r.width*r.height;if(vs[i].closest('.video-js'))a+=1e9;if(a>best){best=a;v=vs[i];}}" +
+        "if(!v)return;" +
+        "var now=Date.now();" +
+        "if(!t0){t0=now;play(v);return;}" +
+        "if(!big&&now-t0>=D){big=1;enlarge(v);}" +
+        "if(big&&v.paused&&now-last>4000)play(v);" +
         "},1000);" +
         "})();";
 
