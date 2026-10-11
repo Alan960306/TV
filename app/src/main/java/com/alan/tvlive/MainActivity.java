@@ -24,7 +24,7 @@ public class MainActivity extends Activity {
     // 调试提示：调好后改成 false
     static final boolean DEBUG = true;
     // 点击播放后，等多少毫秒再放大
-    static final int ENLARGE_DELAY_MS = 8000;
+    static final int ENLARGE_DELAY_MS = 15000;
 
     static final String[] ALLOW_HOSTS = { "yes2049.com", "yeslivetv.com", "cloudflare" };
     static final String[] AD_HOSTS = {
