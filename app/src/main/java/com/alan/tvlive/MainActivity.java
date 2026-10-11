@@ -2,10 +2,13 @@ package com.alan.tvlive;
 
 import android.app.Activity;
 import android.graphics.Bitmap;
+import android.graphics.Typeface;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
 import android.os.SystemClock;
+import android.util.TypedValue;
+import android.view.Gravity;
 import android.view.InputDevice;
 import android.view.KeyEvent;
 import android.view.MotionEvent;
@@ -20,6 +23,9 @@ import android.webkit.WebSettings;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
 import android.widget.FrameLayout;
+import android.widget.LinearLayout;
+import android.widget.ScrollView;
+import android.widget.TextView;
 import android.widget.Toast;
 import java.io.ByteArrayInputStream;
 import java.util.Random;
@@ -27,10 +33,26 @@ import java.util.Random;
 public class MainActivity extends Activity {
     // 去广告开关：拦截后视频播不出来就改成 false
     static final boolean BLOCK_ADS = true;
-    // 调试提示：调好后改成 false
-    static final boolean DEBUG = true;
+    // 调试提示：需要排查问题时改成 true
+    static final boolean DEBUG = false;
     // 模拟点击播放后，锁定操作并等待的毫秒数（期间遥控器所有按键无效，之后才放大）
     static final int LOCK_MS = 15000;
+
+    // 频道列表：名字和网址一一对应，要增减频道就改这两个数组
+    static final String[] NAMES = {
+        "TVB Plus",
+        "TVB明珠台",
+        "TVB翡翠台",
+        "無綫新聞台",
+        "無綫財經·體育·資訊台"
+    };
+    static final String[] URLS = {
+        "https://live.yes2049.com/channels/j2/",
+        "https://live.yes2049.com/channels/tvb-pearl/",
+        "https://live.yes2049.com/channels/tvb-jade/",
+        "https://live.yes2049.com/channels/tvb-news-channel/",
+        "https://live.yes2049.com/channels/tvb-finance-information-channel/"
+    };
 
     static final String[] ALLOW_HOSTS = { "yes2049.com", "yeslivetv.com", "cloudflare" };
     static final String[] AD_HOSTS = {
@@ -89,6 +111,8 @@ public class MainActivity extends Activity {
 
     WebView web;
     FrameLayout root;
+    View menu;
+    TextView[] btns = new TextView[NAMES.length];
     View customView;
     WebChromeClient.CustomViewCallback customCb;
     Handler h = new Handler(Looper.getMainLooper());
@@ -99,9 +123,8 @@ public class MainActivity extends Activity {
     int pollGen = -1;
     int polls = 0;
     boolean tapped = false;
+    boolean inPlayer = false;
     int idx = 0;
-    // 先放测试网址，之后换成你的频道页
-    String[] urls = { "https://live.yes2049.com/" };
 
     @Override
     protected void onCreate(Bundle b) {
@@ -110,6 +133,8 @@ public class MainActivity extends Activity {
         root = new FrameLayout(this);
         web = new WebView(this);
         root.addView(web, new FrameLayout.LayoutParams(-1, -1));
+        web.setVisibility(View.GONE);
+        buildMenu();
         setContentView(root);
 
         WebSettings s = web.getSettings();
@@ -154,6 +179,7 @@ public class MainActivity extends Activity {
 
             @Override
             public void onPageFinished(WebView v, String url) {
+                if (!inPlayer) return;
                 v.evaluateJavascript(JS_INIT, null);
                 if (!tapped && System.currentTimeMillis() >= lockUntil && pollGen != gen) {
                     pollGen = gen;
@@ -178,7 +204,96 @@ public class MainActivity extends Activity {
             }
         });
 
-        web.loadUrl(urls[idx]);
+        showMenu();
+    }
+
+    int dp(int v) {
+        return (int) (v * getResources().getDisplayMetrics().density);
+    }
+
+    LinearLayout.LayoutParams lp(int w, int hh, int l, int t, int r, int b) {
+        LinearLayout.LayoutParams p = new LinearLayout.LayoutParams(w, hh);
+        p.setMargins(l, t, r, b);
+        return p;
+    }
+
+    void paint(TextView t, boolean focused) {
+        t.setBackgroundColor(focused ? 0xFFFFB300 : 0xFF2E2E2E);
+        t.setTextColor(focused ? 0xFF000000 : 0xFFFFFFFF);
+    }
+
+    // 频道列表（大字、遥控器上下键选、OK 键进入）
+    void buildMenu() {
+        ScrollView sv = new ScrollView(this);
+        sv.setBackgroundColor(0xFF111111);
+        sv.setFillViewport(true);
+        LinearLayout col = new LinearLayout(this);
+        col.setOrientation(LinearLayout.VERTICAL);
+        col.setGravity(Gravity.CENTER_HORIZONTAL);
+        col.setPadding(dp(40), dp(40), dp(40), dp(40));
+        sv.addView(col, new FrameLayout.LayoutParams(-1, -2));
+
+        TextView title = new TextView(this);
+        title.setText("请选择频道");
+        title.setTextColor(0xFFFFFFFF);
+        title.setTextSize(TypedValue.COMPLEX_UNIT_SP, 34);
+        title.setGravity(Gravity.CENTER);
+        col.addView(title, lp(-1, -2, 0, 0, 0, dp(24)));
+
+        for (int i = 0; i < NAMES.length; i++) {
+            final int n = i;
+            TextView t = new TextView(this);
+            t.setText(NAMES[i]);
+            t.setTextSize(TypedValue.COMPLEX_UNIT_SP, 32);
+            t.setTypeface(Typeface.DEFAULT_BOLD);
+            t.setGravity(Gravity.CENTER);
+            t.setFocusable(true);
+            t.setClickable(true);
+            paint(t, false);
+            t.setOnFocusChangeListener(new View.OnFocusChangeListener() {
+                @Override
+                public void onFocusChange(View v, boolean f) {
+                    paint((TextView) v, f);
+                }
+            });
+            t.setOnClickListener(new View.OnClickListener() {
+                @Override
+                public void onClick(View v) {
+                    openChannel(n);
+                }
+            });
+            col.addView(t, lp(dp(720), dp(84), 0, dp(8), 0, dp(8)));
+            btns[i] = t;
+        }
+        menu = sv;
+        root.addView(menu, new FrameLayout.LayoutParams(-1, -1));
+    }
+
+    void openChannel(int i) {
+        idx = i;
+        inPlayer = true;
+        h.removeCallbacksAndMessages(null);
+        gen++;
+        tapped = false;
+        polls = 0;
+        lockUntil = 0;
+        pollGen = -1;
+        menu.setVisibility(View.GONE);
+        web.setVisibility(View.VISIBLE);
+        web.requestFocus();
+        web.loadUrl(URLS[i]);
+    }
+
+    void showMenu() {
+        inPlayer = false;
+        h.removeCallbacksAndMessages(null);
+        gen++;
+        tapped = false;
+        lockUntil = 0;
+        web.loadUrl("about:blank");
+        web.setVisibility(View.GONE);
+        menu.setVisibility(View.VISIBLE);
+        btns[idx].requestFocus();
     }
 
     // 每秒找一次播放器，找到并且中心没被广告盖住，就准备模拟点击
@@ -275,8 +390,8 @@ public class MainActivity extends Activity {
             hideCustom();
             return;
         }
-        if (web.canGoBack()) {
-            web.goBack();
+        if (inPlayer) {
+            showMenu();
             return;
         }
         long now = System.currentTimeMillis();
@@ -290,15 +405,13 @@ public class MainActivity extends Activity {
 
     @Override
     public boolean onKeyDown(int k, KeyEvent e) {
-        if (urls.length > 1) {
+        if (inPlayer) {
             if (k == KeyEvent.KEYCODE_CHANNEL_UP) {
-                idx = (idx + 1) % urls.length;
-                web.loadUrl(urls[idx]);
+                openChannel((idx + 1) % URLS.length);
                 return true;
             }
             if (k == KeyEvent.KEYCODE_CHANNEL_DOWN) {
-                idx = (idx - 1 + urls.length) % urls.length;
-                web.loadUrl(urls[idx]);
+                openChannel((idx - 1 + URLS.length) % URLS.length);
                 return true;
             }
         }
