@@ -6,9 +6,11 @@ import android.content.res.ColorStateList;
 import android.graphics.Bitmap;
 import android.graphics.Canvas;
 import android.graphics.Paint;
+import android.graphics.Path;
 import android.graphics.RectF;
 import android.graphics.Typeface;
 import android.graphics.drawable.GradientDrawable;
+import android.media.AudioManager;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
@@ -44,12 +46,18 @@ public class MainActivity extends Activity {
     static final boolean BLOCK_ADS = true;
     // 调试提示：需要排查问题时改成 true
     static final boolean DEBUG = false;
+    // 用 App 自己的音量条（false = 完全交给系统处理音量键）
+    static final boolean CUSTOM_VOLUME = true;
     // 模拟点击播放后，锁定操作并等待的毫秒数（期间遥控器所有按键无效，之后才放大）
     static final int LOCK_MS = 15000;
     // 切到别的 App 后，在后台超过这个毫秒数就彻底退出
     static final long BG_EXIT_MS = 30000;
     // 启动加载页至少显示多久（毫秒），避免一闪而过
     static final long LOADING_MIN_MS = 1500;
+    // 频道栏多久没操作就自动关闭
+    static final long PANEL_HIDE_MS = 10000;
+    // 音量条显示多久
+    static final long VOL_HIDE_MS = 2000;
 
     // 菜单上的专属文字，想改话就改这里
     static final String MENU_BRAND = "TVB 直播";
@@ -59,8 +67,12 @@ public class MainActivity extends Activity {
     // 主题色
     static final int COLOR_BG = 0xFF111111;
     static final int COLOR_ACCENT = 0xFFFFB300;
+    // 选台菜单（在壁纸上）用半透明
     static final int COLOR_ROW = 0x66000000;
     static final int COLOR_BADGE = 0x29FFFFFF;
+    // 频道栏（盖在视频上）用不透明，保证看得清
+    static final int COLOR_PROW = 0xFF242424;
+    static final int COLOR_PBADGE = 0xFF3A3A3A;
 
     // 壁纸颜色
     static final int COLOR_WALL = 0xFF2B1620;
@@ -228,16 +240,62 @@ public class MainActivity extends Activity {
         }
     }
 
+    // 音量条左边的小喇叭图标
+    static class SpeakerIcon extends View {
+        Paint p = new Paint(Paint.ANTI_ALIAS_FLAG);
+        Path body = new Path();
+        Path w1 = new Path();
+        Path w2 = new Path();
+
+        SpeakerIcon(Context c) {
+            super(c);
+            p.setStyle(Paint.Style.STROKE);
+            p.setStrokeCap(Paint.Cap.ROUND);
+            p.setStrokeJoin(Paint.Join.ROUND);
+            p.setStrokeWidth(1.8f);
+            p.setColor(COLOR_ACCENT);
+            body.moveTo(4f, 9.5f);
+            body.rLineTo(0f, 5f);
+            body.rLineTo(3.5f, 0f);
+            body.lineTo(12f, 18.5f);
+            body.rLineTo(0f, -13f);
+            body.lineTo(7.5f, 9.5f);
+            body.close();
+            w1.moveTo(15.5f, 9f);
+            w1.quadTo(18f, 12f, 15.5f, 15f);
+            w2.moveTo(18f, 6.5f);
+            w2.quadTo(23f, 12f, 18f, 17.5f);
+        }
+
+        @Override
+        protected void onDraw(Canvas c) {
+            float s = getWidth() / 24f;
+            c.scale(s, s);
+            c.drawPath(body, p);
+            c.drawPath(w1, p);
+            c.drawPath(w2, p);
+        }
+    }
+
     WebView web;
     FrameLayout root;
     View menu;
     View loading;
+    View panel;
+    View volBox;
+    View volFill;
+    View volRest;
+    TextView volText;
     LinearLayout[] btns = new LinearLayout[NAMES.length];
+    LinearLayout[] pRows = new LinearLayout[NAMES.length];
     View customView;
     WebChromeClient.CustomViewCallback customCb;
+    AudioManager audio;
     Handler h = new Handler(Looper.getMainLooper());
     // 后台退出倒计时单独用一个 Handler，避免被 h.removeCallbacksAndMessages(null) 清掉
     Handler bgH = new Handler(Looper.getMainLooper());
+    // 频道栏、音量条的自动隐藏也单独用一个 Handler
+    Handler ph = new Handler(Looper.getMainLooper());
     Random rnd = new Random();
     long lastBack = 0;
     long lockUntil = 0;
@@ -245,14 +303,26 @@ public class MainActivity extends Activity {
     int gen = 0;
     int pollGen = -1;
     int polls = 0;
+    int pSel = 0;
     boolean tapped = false;
     boolean inPlayer = false;
     boolean cleaned = false;
+    boolean panelOpen = false;
     int idx = 0;
 
     Runnable exitTask = new Runnable() {
         @Override
         public void run() { quitApp(); }
+    };
+
+    Runnable panelHide = new Runnable() {
+        @Override
+        public void run() { closePanel(); }
+    };
+
+    Runnable volHide = new Runnable() {
+        @Override
+        public void run() { volBox.setVisibility(View.GONE); }
     };
 
     // 清理完成（或超时）后，关闭加载页，进入选台菜单
@@ -270,11 +340,14 @@ public class MainActivity extends Activity {
     protected void onCreate(Bundle b) {
         super.onCreate(b);
         getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+        audio = (AudioManager) getSystemService(Context.AUDIO_SERVICE);
         root = new FrameLayout(this);
         web = new WebView(this);
         root.addView(web, new FrameLayout.LayoutParams(-1, -1));
         web.setVisibility(View.GONE);
         buildMenu();
+        buildPanel();
+        buildVolume();
         buildLoading();
         setContentView(root);
 
@@ -502,6 +575,211 @@ public class MainActivity extends Activity {
         root.addView(menu, new FrameLayout.LayoutParams(-1, -1));
     }
 
+    // 播放时按 ← 弹出的频道栏（左侧，占屏幕宽度约 36%）
+    void buildPanel() {
+        int w = (int) (getResources().getDisplayMetrics().widthPixels * 0.36f);
+        LinearLayout col = new LinearLayout(this);
+        col.setOrientation(LinearLayout.VERTICAL);
+        col.setBackgroundColor(0xEE0E0E0E);
+        col.setPadding(dp(24), dp(28), dp(24), dp(20));
+
+        TextView brand = new TextView(this);
+        brand.setText(MENU_BRAND);
+        brand.setTextColor(COLOR_ACCENT);
+        brand.setTextSize(TypedValue.COMPLEX_UNIT_SP, 16);
+        brand.setLetterSpacing(0.15f);
+        col.addView(brand, lp(-2, -2, 0, 0, 0, 0));
+
+        TextView title = new TextView(this);
+        title.setText("频道");
+        title.setTextColor(0xFFFFFFFF);
+        title.setTextSize(TypedValue.COMPLEX_UNIT_SP, 30);
+        title.setTypeface(Typeface.DEFAULT_BOLD);
+        col.addView(title, lp(-2, -2, 0, dp(2), 0, dp(14)));
+
+        for (int i = 0; i < NAMES.length; i++) {
+            LinearLayout row = new LinearLayout(this);
+            row.setOrientation(LinearLayout.HORIZONTAL);
+            row.setGravity(Gravity.CENTER_VERTICAL);
+            row.setPadding(dp(14), 0, dp(14), 0);
+
+            TextView badge = new TextView(this);
+            badge.setText(String.valueOf(i + 1));
+            badge.setTextSize(TypedValue.COMPLEX_UNIT_SP, 20);
+            badge.setTypeface(Typeface.DEFAULT_BOLD);
+            badge.setGravity(Gravity.CENTER);
+            row.addView(badge, lp(dp(40), dp(40), 0, 0, 0, 0));
+
+            TextView name = new TextView(this);
+            name.setText(NAMES[i]);
+            name.setTextSize(TypedValue.COMPLEX_UNIT_SP, 22);
+            name.setTypeface(Typeface.DEFAULT_BOLD);
+            LinearLayout.LayoutParams np = new LinearLayout.LayoutParams(0, -2, 1f);
+            np.setMargins(dp(14), 0, dp(8), 0);
+            row.addView(name, np);
+
+            TextView tag = new TextView(this);
+            tag.setText("播放中");
+            tag.setTextSize(TypedValue.COMPLEX_UNIT_SP, 14);
+            tag.setTypeface(Typeface.DEFAULT_BOLD);
+            tag.setPadding(dp(8), dp(2), dp(8), dp(2));
+            row.addView(tag, lp(-2, -2, 0, 0, 0, 0));
+
+            col.addView(row, lp(-1, dp(62), 0, dp(5), 0, dp(5)));
+            pRows[i] = row;
+        }
+
+        View sp = new View(this);
+        col.addView(sp, new LinearLayout.LayoutParams(-1, 0, 1f));
+
+        TextView tip = new TextView(this);
+        tip.setText("上下键选择　OK 切换　→ 关闭");
+        tip.setTextColor(0xFF8A8A8A);
+        tip.setTextSize(TypedValue.COMPLEX_UNIT_SP, 16);
+        tip.setGravity(Gravity.CENTER);
+        col.addView(tip, lp(-1, -2, 0, 0, 0, 0));
+
+        panel = col;
+        panel.setVisibility(View.GONE);
+        root.addView(panel, new FrameLayout.LayoutParams(w, -1, Gravity.START));
+        paintPanel();
+    }
+
+    // 频道栏一行的外观：选中 = 琥珀底黑字；正在播放的台带「播放中」标签
+    void paintPanel() {
+        for (int i = 0; i < pRows.length; i++) {
+            LinearLayout row = pRows[i];
+            boolean f = i == pSel;
+            row.setBackground(round(f ? COLOR_ACCENT : COLOR_PROW, 14));
+            TextView badge = (TextView) row.getChildAt(0);
+            badge.setBackground(round(f ? 0xFF000000 : COLOR_PBADGE, 10));
+            badge.setTextColor(COLOR_ACCENT);
+            TextView name = (TextView) row.getChildAt(1);
+            name.setTextColor(f ? 0xFF000000 : 0xFFFFFFFF);
+            TextView tag = (TextView) row.getChildAt(2);
+            tag.setVisibility(i == idx ? View.VISIBLE : View.INVISIBLE);
+            tag.setBackground(round(f ? 0xFF000000 : COLOR_ACCENT, 20));
+            tag.setTextColor(f ? COLOR_ACCENT : 0xFF000000);
+        }
+    }
+
+    // 底部音量条：喇叭图标 + 「音量」+ 进度条 + 百分比
+    void buildVolume() {
+        LinearLayout box = new LinearLayout(this);
+        box.setOrientation(LinearLayout.HORIZONTAL);
+        box.setGravity(Gravity.CENTER_VERTICAL);
+        box.setBackground(round(0xE6121212, 22));
+        box.setPadding(dp(28), 0, dp(28), 0);
+
+        box.addView(new SpeakerIcon(this), lp(dp(46), dp(46), 0, 0, 0, 0));
+
+        LinearLayout mid = new LinearLayout(this);
+        mid.setOrientation(LinearLayout.VERTICAL);
+        LinearLayout.LayoutParams mp = new LinearLayout.LayoutParams(0, -2, 1f);
+        mp.setMargins(dp(22), 0, dp(18), 0);
+        box.addView(mid, mp);
+
+        TextView label = new TextView(this);
+        label.setText("音量");
+        label.setTextColor(0xFFFFFFFF);
+        label.setTextSize(TypedValue.COMPLEX_UNIT_SP, 20);
+        label.setTypeface(Typeface.DEFAULT_BOLD);
+        mid.addView(label, lp(-2, -2, 0, 0, 0, 0));
+
+        LinearLayout track = new LinearLayout(this);
+        track.setOrientation(LinearLayout.HORIZONTAL);
+        track.setBackground(round(0xFF3A3A3A, 8));
+        mid.addView(track, lp(-1, dp(12), 0, dp(10), 0, 0));
+
+        volFill = new View(this);
+        volFill.setBackground(round(COLOR_ACCENT, 8));
+        track.addView(volFill, new LinearLayout.LayoutParams(0, -1, 50f));
+        volRest = new View(this);
+        track.addView(volRest, new LinearLayout.LayoutParams(0, -1, 50f));
+
+        volText = new TextView(this);
+        volText.setText("0%");
+        volText.setTextColor(COLOR_ACCENT);
+        volText.setTextSize(TypedValue.COMPLEX_UNIT_SP, 40);
+        volText.setTypeface(Typeface.DEFAULT_BOLD);
+        volText.setGravity(Gravity.END | Gravity.CENTER_VERTICAL);
+        volText.setMinWidth(dp(120));
+        box.addView(volText, lp(-2, -2, 0, 0, 0, 0));
+
+        FrameLayout.LayoutParams fp = new FrameLayout.LayoutParams(dp(560), dp(104),
+                Gravity.BOTTOM | Gravity.CENTER_HORIZONTAL);
+        fp.bottomMargin = dp(48);
+        volBox = box;
+        volBox.setVisibility(View.GONE);
+        root.addView(volBox, fp);
+    }
+
+    // 调音量并显示音量条
+    void adjustVolume(boolean up) {
+        audio.adjustStreamVolume(AudioManager.STREAM_MUSIC,
+                up ? AudioManager.ADJUST_RAISE : AudioManager.ADJUST_LOWER, 0);
+        showVolume();
+    }
+
+    void showVolume() {
+        int max = audio.getStreamMaxVolume(AudioManager.STREAM_MUSIC);
+        int cur = audio.getStreamVolume(AudioManager.STREAM_MUSIC);
+        int pct = max > 0 ? Math.round(cur * 100f / max) : 0;
+        LinearLayout.LayoutParams a = (LinearLayout.LayoutParams) volFill.getLayoutParams();
+        a.weight = pct;
+        volFill.setLayoutParams(a);
+        LinearLayout.LayoutParams c = (LinearLayout.LayoutParams) volRest.getLayoutParams();
+        c.weight = 100 - pct;
+        volRest.setLayoutParams(c);
+        volText.setText(pct + "%");
+        volBox.setVisibility(View.VISIBLE);
+        ph.removeCallbacks(volHide);
+        ph.postDelayed(volHide, VOL_HIDE_MS);
+    }
+
+    void openPanel() {
+        if (!inPlayer || panelOpen) return;
+        pSel = idx;
+        paintPanel();
+        panel.setVisibility(View.VISIBLE);
+        panelOpen = true;
+        schedulePanelHide();
+    }
+
+    void closePanel() {
+        ph.removeCallbacks(panelHide);
+        panelOpen = false;
+        panel.setVisibility(View.GONE);
+    }
+
+    void schedulePanelHide() {
+        ph.removeCallbacks(panelHide);
+        ph.postDelayed(panelHide, PANEL_HIDE_MS);
+    }
+
+    // 频道栏打开时的按键：上下选择，OK 切换，→ 关闭
+    void handlePanelKey(int k) {
+        int n = URLS.length;
+        if (k == KeyEvent.KEYCODE_DPAD_UP) {
+            pSel = (pSel - 1 + n) % n;
+            paintPanel();
+            schedulePanelHide();
+        } else if (k == KeyEvent.KEYCODE_DPAD_DOWN) {
+            pSel = (pSel + 1) % n;
+            paintPanel();
+            schedulePanelHide();
+        } else if (k == KeyEvent.KEYCODE_DPAD_CENTER || k == KeyEvent.KEYCODE_ENTER
+                || k == KeyEvent.KEYCODE_NUMPAD_ENTER) {
+            int sel = pSel;
+            closePanel();
+            if (sel != idx) openChannel(sel);
+        } else if (k == KeyEvent.KEYCODE_DPAD_RIGHT) {
+            closePanel();
+        } else {
+            schedulePanelHide();
+        }
+    }
+
     // 启动时清理 cookies 和网页数据，期间显示加载页，清完再进菜单
     void startClean() {
         cleaned = false;
@@ -528,6 +806,7 @@ public class MainActivity extends Activity {
     void openChannel(int i) {
         idx = i;
         inPlayer = true;
+        closePanel();
         h.removeCallbacksAndMessages(null);
         gen++;
         tapped = false;
@@ -542,6 +821,7 @@ public class MainActivity extends Activity {
 
     void showMenu() {
         inPlayer = false;
+        closePanel();
         h.removeCallbacksAndMessages(null);
         gen++;
         tapped = false;
@@ -661,15 +941,44 @@ public class MainActivity extends Activity {
         web.onResume();
     }
 
-    // 锁定期间，遥控器所有按键都不响应
+    // 按键总入口：
+    // 1. 音量键：不受锁定影响，用 App 自己的音量条（音量固定的设备交回系统）
+    // 2. 锁定期间：其余按键全部不响应
+    // 3. 频道栏打开时：上下/OK/→ 由频道栏处理，返回键走 onBackPressed
+    // 4. 播放中按 ←：打开频道栏
     @Override
     public boolean dispatchKeyEvent(KeyEvent e) {
+        int k = e.getKeyCode();
+        boolean down = e.getAction() == KeyEvent.ACTION_DOWN;
+
+        if (k == KeyEvent.KEYCODE_VOLUME_UP || k == KeyEvent.KEYCODE_VOLUME_DOWN) {
+            if (CUSTOM_VOLUME && audio != null && !audio.isVolumeFixed()) {
+                if (down) adjustVolume(k == KeyEvent.KEYCODE_VOLUME_UP);
+                return true;
+            }
+            return super.dispatchKeyEvent(e);
+        }
+        if (k == KeyEvent.KEYCODE_VOLUME_MUTE) return super.dispatchKeyEvent(e);
+
         if (System.currentTimeMillis() < lockUntil) return true;
+
+        if (panelOpen && k != KeyEvent.KEYCODE_BACK) {
+            if (down) handlePanelKey(k);
+            return true;
+        }
+        if (inPlayer && k == KeyEvent.KEYCODE_DPAD_LEFT) {
+            if (down && e.getRepeatCount() == 0) openPanel();
+            return true;
+        }
         return super.dispatchKeyEvent(e);
     }
 
     @Override
     public void onBackPressed() {
+        if (panelOpen) {
+            closePanel();
+            return;
+        }
         if (customView != null) {
             hideCustom();
             return;
